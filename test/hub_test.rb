@@ -50,7 +50,7 @@ class HubTest < Test::Unit::TestCase
         prompt_stubs.shift.call(what)
       end
       define_method :prompt_password do |host, user|
-        password_prompt_stubs.shift.call(what)
+        password_prompt_stubs.shift.call(host, user)
       end
     end
 
