@@ -343,14 +343,14 @@ module Hub
 
         args.delete new_branch_name
         user, branch = pull_data['head']['label'].split(':', 2)
-        abort "Error: #{user}'s fork is not available anymore" unless pull_data['head']['repository']
+        abort "Error: #{user}'s fork is not available anymore" unless pull_data['head']['repo']
         new_branch_name ||= "#{user}-#{branch}"
 
         if remotes.include? user
           args.before ['remote', 'set-branches', '--add', user, branch]
           args.before ['fetch', user, "+refs/heads/#{branch}:refs/remotes/#{user}/#{branch}"]
         else
-          url = github_project(url.project_name, user).git_url(:private => pull_data['head']['repository']['private'],
+          url = github_project(url.project_name, user).git_url(:private => pull_data['head']['repo']['private'],
                                                                :https => https_protocol?)
           args.before ['remote', 'add', '-f', '-t', branch, user, url]
         end
@@ -698,9 +698,7 @@ module Hub
         config_file = ENV['HUB_CONFIG'] || '~/.config/hub'
         file_store = GitHubAPI::FileStore.new File.expand_path(config_file)
         file_config = GitHubAPI::Configuration.new file_store
-        legacy_config = GitHubAPI::LegacyConfiguration.new git_reader
-        config = GitHubAPI::CascadingConfiguration.new [legacy_config, file_config]
-        GitHubAPI.new config
+        GitHubAPI.new file_config
       end
     end
 

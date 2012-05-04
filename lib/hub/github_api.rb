@@ -1,13 +1,13 @@
 require 'uri'
 require 'yaml'
 require 'forwardable'
+require 'fileutils'
 
 module Hub
-  # A client for the GitHub v2 or v3 APIs, depending on the host.
+  # Client for the GitHub v3 API.
   #
-  # When API v3 is used, user gets prompted for username/password in the shell,
-  # then this information is exchanged for an OAuth token which is saved in a file.
-  # When API v2 is used, username/token combination is read from git config.
+  # First time around, user gets prompted for username/password in the shell.
+  # Then this information is exchanged for an OAuth token which is saved in a file.
   class GitHubAPI
     attr_reader :config
 
@@ -31,110 +31,68 @@ module Hub
       end
     end
 
-    def api_v2? project
-      project.host.downcase != 'github.com'
+    def api_host host
+      host = host.downcase
+      'github.com' == host ? 'api.github.com' : host
     end
 
     # Public: Determine whether a specific repo already exists.
     def repo_exists? project
-      if api_v2? project
-        res = get "https://%s/api/v2/yaml/repos/show/%s/%s" %
-          [project.host, project.owner, project.name]
-        res.success?
-      else
-        res = get "https://api.%s/repos/%s/%s" %
-          [project.host, project.owner, project.name]
-        res.success?
-      end
+      res = get "https://%s/repos/%s/%s" %
+        [api_host(project.host), project.owner, project.name]
+      res.success?
     end
 
     # Public: Fork the specified repo.
     def fork_repo project
-      if api_v2? project
-        res = post "https://%s/api/v2/yaml/repos/fork/%s/%s" %
-          [project.host, project.owner, project.name]
-        res.error! unless res.success?
-      else
-        res = post "https://api.%s/repos/%s/%s/forks" %
-          [project.host, project.owner, project.name]
-        res.error! unless res.success?
-      end
+      res = post "https://%s/repos/%s/%s/forks" %
+        [api_host(project.host), project.owner, project.name]
+      res.error! unless res.success?
     end
 
     # Public: Create a new project.
     def create_repo project, options = {}
-      is_org = project.owner != config.username(project.host)
-      params = { :name => project.name }
+      is_org = project.owner != config.username(api_host(project.host))
+      params = { :name => project.name, :private => !!options[:private] }
       params[:description] = options[:description] if options[:description]
       params[:homepage]    = options[:homepage]    if options[:homepage]
 
-      if api_v2? project
-        params[:name] = project.name_with_owner if is_org
-        params[:public] = '0' if options[:private]
-
-        res = post_form "https://%s/api/v2/json/repos/create" % project.host, params
-        res.error! unless res.success?
+      if is_org
+        res = post "https://%s/orgs/%s/repos" % [api_host(project.host), project.owner], params
       else
-        params[:private] = !!options[:private]
-
-        if is_org
-          res = post "https://api.%s/orgs/%s/repos" % [project.host, project.owner], params
-        else
-          res = post "https://api.%s/user/repos" % project.host, params
-        end
-        res.error! unless res.success?
+        res = post "https://%s/user/repos" % api_host(project.host), params
       end
+      res.error! unless res.success?
     end
 
     # Public: Fetch info about a pull request.
     def pullrequest_info project, pull_id
-      if api_v2? project
-        res = get "https://%s/api/v2/json/pulls/%s/%s/%d" %
-          [project.host, project.owner, project.name, pull_id]
-        res.error! unless res.success?
-        res.data['pull']
-      else
-        res = get "https://api.%s/repos/%s/%s/pulls/%d" %
-          [project.host, project.owner, project.name, pull_id]
-        res.error! unless res.success?
-        res.data
-      end
+      res = get "https://%s/repos/%s/%s/pulls/%d" %
+        [api_host(project.host), project.owner, project.name, pull_id]
+      res.error! unless res.success?
+      res.data
     end
 
     # Returns parsed data from the new pull request.
     def create_pullrequest options
       project = options.fetch(:project)
+      params = {
+        :base => options.fetch(:base),
+        :head => options.fetch(:head)
+      }
 
-      if api_v2? project
-        params = {
-          'pull[base]' => options.fetch(:base),
-          'pull[head]' => options.fetch(:head)
-        }
-        params['pull[issue]'] = options[:issue] if options[:issue]
-        params['pull[title]'] = options[:title] if options[:title]
-        params['pull[body]'] = options[:body] if options[:body]
-
-        res = post_form "https://%s/api/v2/json/pulls/%s/%s" %
-          [project.host, project.owner, project.name], params
-        res.error! unless res.success?
-        res.data['pull']
+      if options[:issue]
+        params[:issue] = options[:issue]
       else
-        params = {
-          :base => options.fetch(:base),
-          :head => options.fetch(:head)
-        }
-        if options[:issue]
-          params[:issue] = options[:issue]
-        else
-          params[:title] = options[:title] if options[:title]
-          params[:body]  = options[:body]  if options[:body]
-        end
-
-        res = post "https://api.%s/repos/%s/%s/pulls" %
-          [project.host, project.owner, project.name], params
-        res.error! unless res.success?
-        res.data
+        params[:title] = options[:title] if options[:title]
+        params[:body]  = options[:body]  if options[:body]
       end
+
+      res = post "https://%s/repos/%s/%s/pulls" %
+        [api_host(project.host), project.owner, project.name], params
+
+      res.error! unless res.success?
+      res.data
     end
 
     # Methods for performing HTTP requests
@@ -146,9 +104,17 @@ module Hub
         def status() code.to_i end
         def data?() content_type =~ /\bjson\b/ end
         def data() @data ||= JSON.parse(body) end
-        def error_message?() data? and data['error'] end
-        def error_message() data['error'] end
+        def error_message?() data? and data['errors'] || data['message'] end
+        def error_message() error_sentences || data['message'] end
         def success?() Net::HTTPSuccess === self end
+        def error_sentences
+          data['errors'].map do |err|
+            case err['code']
+            when 'custom'        then err['message']
+            when 'missing_field' then "field '%s' is missing" % err['field']
+            end
+          end.compact if data['errors']
+        end
       end
 
       def get url, &block
@@ -189,10 +155,7 @@ module Hub
       def apply_authentication req, url
         user = url.user || config.username(url.host)
 
-        if req.path.index('/api/v2/') == 0
-          token = config.api_token(url.host, user)
-          req.basic_auth "#{user}/token", token
-        elsif req.path.index('/authorizations') == 0
+        if req.path.index('/authorizations') == 0
           pass = config.password(url.host, user)
           req.basic_auth user, pass
         else
@@ -292,6 +255,7 @@ module Hub
       end
 
       def save
+        FileUtils.mkdir_p File.dirname(@filename)
         File.open(@filename, 'w') {|f| f << YAML.dump(@data) }
       end
     end
@@ -372,79 +336,6 @@ module Hub
         if proxy = ENV[env_name] || ENV[env_name.downcase]
           proxy = "http://#{proxy}" unless proxy.include? '://'
           URI.parse proxy
-        end
-      end
-    end
-
-    class LegacyConfiguration
-      # Options:
-      # git - a Hub::Context::GitReader
-      def initialize git
-        @git = git
-      end
-
-      def config_prefix host
-        case host.downcase
-        when 'api.github.com', 'github.com' then 'github'
-        else %(github."#{host.downcase}")
-        end
-      end
-
-      # Read username for a specific GitHub host from git-config.
-      #
-      # Yields if not found.
-      def username host
-        if user = ENV['GITHUB_USER'] and !user.empty?
-          user
-        else
-          config_key = "#{config_prefix host}.user"
-          @git.read_config config_key or yield
-        end
-      end
-
-      # Read the API v2 token for a specific GitHub host from git-config.
-      #
-      # Yields if not found.
-      def api_token host, user
-        if token = ENV['GITHUB_TOKEN'] and !token.empty?
-          token
-        else
-          config_key = "#{config_prefix host}.token"
-          @git.read_config config_key or yield
-        end
-      end
-    end
-
-    # Wraps multiple Configuration-like objects, tries each one in order and
-    # returns first value found.
-    class CascadingConfiguration
-      def initialize configs
-        @configs = Array(configs)
-      end
-
-      def method_missing method, *args, &block
-        try_config 0, method, args, &block
-      end
-
-      def respond_to? method, with_private = false
-        !with_private && @configs.any? {|c| c.respond_to? method } or super
-      end
-
-      def try_config idx, method, args, &block
-        if config = @configs[idx]
-          if config.respond_to? method
-            if @configs.length >= idx + 2 or block_given?
-              config.send(method, *args) {
-                try_config idx + 1, method, args, &block
-              }
-            else
-              config.send(method, *args)
-            end
-          else
-            try_config idx + 1, method, args, &block
-          end
-        else
-          yield
         end
       end
     end

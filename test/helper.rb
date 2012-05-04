@@ -100,4 +100,15 @@ class Test::Unit::TestCase
     assert expected == output,
       "expected:\n#{expected}\ngot:\n#{output}"
   end
+
+  def edit_hub_config
+    config = ENV['HUB_CONFIG']
+    if File.exist? config
+      data = YAML.load File.read(config)
+    else
+      data = {}
+    end
+    yield data
+    File.open(config, 'w') { |cfg| cfg << YAML.dump(data) }
+  end
 end
