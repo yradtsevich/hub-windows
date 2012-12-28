@@ -398,8 +398,8 @@ module Hub
 
       # FIXME: probably not cross-platform
       def askpass
-        tty_state = `stty -g`
-        system 'stty raw -echo -icanon isig' if $?.success?
+        #tty_state = `stty -g` #missing in msysgit
+        #system 'stty raw -echo -icanon isig' if $?.success? #missing in msysgit
         pass = ''
         while char = $stdin.getbyte and !(char == 13 or char == 10)
           if char == 127 or char == 8
@@ -410,7 +410,7 @@ module Hub
         end
         pass
       ensure
-        system "stty #{tty_state}" unless tty_state.empty?
+        #system "stty #{tty_state}" unless tty_state.empty? #missing in msysgit
       end
 
       def proxy_uri(with_ssl)

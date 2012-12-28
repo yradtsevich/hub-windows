@@ -9,7 +9,7 @@ fakebin_dir = File.expand_path('../fakebin', __FILE__)
 ENV['PATH'] = "#{fakebin_dir}:#{ENV['PATH']}"
 
 # Use an isolated config file in testing
-ENV['HUB_CONFIG'] = File.join(ENV['TMPDIR'] || '/tmp', 'hub-test-config')
+ENV['HUB_CONFIG'] = File.join(ENV['TEMP'] || '/tmp', 'hub-test-config')
 
 # Disable `abort` and `exit` in the main test process, but allow it in
 # subprocesses where we need to test does a command properly bail out.
@@ -64,7 +64,7 @@ class Test::Unit::TestCase
       $stderr.reopen(child_write)
       Hub(args).execute
     end
-    
+
     if input
       parent_write.write input
       parent_write.close

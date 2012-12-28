@@ -509,11 +509,11 @@ class HubTest < Test::Unit::TestCase
   def test_help_short_flag_on_command
     usage_help = hub("create -h")
     expected = "Usage: git create [NAME] [-p] [-d DESCRIPTION] [-h HOMEPAGE]\n"
-    assert_equal expected, usage_help
+    assert_equal expected.rstrip, usage_help.rstrip
 
     usage_help = hub("pull-request -h")
     expected = "Usage: git pull-request [-f] [TITLE|-i ISSUE] [-b BASE] [-h HEAD]\n"
-    assert_equal expected, usage_help
+    assert_equal expected.rstrip, usage_help.rstrip
   end
 
   def test_help_hub_no_groff
@@ -721,10 +721,10 @@ class HubTest < Test::Unit::TestCase
     end
 
     def with_tmpdir(value)
-      dir, ENV['TMPDIR'] = ENV['TMPDIR'], value
+      dir, ENV['TEMP'] = ENV['TEMP'], value
       yield
     ensure
-      ENV['TMPDIR'] = dir
+      ENV['TEMP'] = dir
     end
 
     def with_host_env(value)
