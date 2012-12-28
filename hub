@@ -228,7 +228,7 @@ module Hub
     end
 
     def create_repo project, options = {}
-      is_org = project.owner != config.username(api_host(project.host))
+      is_org = project.owner.downcase != config.username(api_host(project.host)).downcase
       params = { :name => project.name, :private => !!options[:private] }
       params[:description] = options[:description] if options[:description]
       params[:homepage]    = options[:homepage]    if options[:homepage]
@@ -282,7 +282,12 @@ module Hub
           data['errors'].map do |err|
             case err['code']
             when 'custom'        then err['message']
-            when 'missing_field' then "field '%s' is missing" % err['field']
+            when 'missing_field'
+              %(Missing field: "%s") % err['field']
+            when 'invalid'
+              %(Invalid value for "%s": "%s") % [ err['field'], err['value'] ]
+            when 'unauthorized'
+              %(Not allowed to change field "%s") % err['field']
             end
           end.compact if data['errors']
         end
@@ -384,10 +389,17 @@ module Hub
         if (req.path =~ /\/authorizations$/)
           super
         else
+          refresh = false
           user = url.user || config.username(url.host)
           token = config.oauth_token(url.host, user) {
+            refresh = true
             obtain_oauth_token url.host, user
           }
+          if refresh
+            res = get "https://#{url.host}/user"
+            res.error! unless res.success?
+            config.update_username(url.host, user, res.data['login'])
+          end
           req['Authorization'] = "token #{token}"
         end
       end
@@ -482,6 +494,12 @@ module Hub
         end
       end
 
+      def update_username host, old_username, new_username
+        entry = @data.entry_for_user(normalize_host(host), old_username)
+        entry['user'] = new_username
+        @data.save
+      end
+
       def api_token host, user
         host = normalize_host host
         @data.fetch_value host, user, :api_token do
@@ -518,8 +536,6 @@ module Hub
       end
 
       def askpass
-        tty_state = `stty -g`
-        system 'stty raw -echo -icanon isig' if $?.success?
         pass = ''
         while char = $stdin.getbyte and !(char == 13 or char == 10)
           if char == 127 or char == 8
@@ -530,7 +546,6 @@ module Hub
         end
         pass
       ensure
-        system "stty #{tty_state}" unless tty_state.empty?
       end
 
       def proxy_uri(with_ssl)
@@ -1486,7 +1501,7 @@ module Hub
         url = url.sub(%r{(/pull/\d+)/\w*$}, '\1') unless gist
         ext = gist ? '.txt' : '.patch'
         url += ext unless File.extname(url) == ext
-        patch_file = File.join(ENV['TMPDIR'] || '/tmp', "#{gist ? 'gist-' : ''}#{File.basename(url)}")
+        patch_file = File.join(ENV['TEMP'] || '/tmp', "#{gist ? 'gist-' : ''}#{File.basename(url)}")
         args.before 'curl', ['-#LA', "hub #{Hub::Version}", url, '-o', patch_file]
         args[idx] = patch_file
       end
@@ -2007,7 +2022,7 @@ module Hub
         if args.chained?
           execute_command_chain
         else
-          exec(*args.to_exec)
+          system(*args.to_exec)
         end
       end
     end
@@ -2017,7 +2032,7 @@ module Hub
       commands.each_with_index do |cmd, i|
         if cmd.respond_to?(:call) then cmd.call
         elsif i == commands.length - 1
-          exec(*cmd)
+          system(*cmd)
         else
           exit($?.exitstatus) unless system(*cmd)
         end
